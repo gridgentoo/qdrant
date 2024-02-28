@@ -153,6 +153,9 @@ pub const DEFAULT_VECTOR_NAME: &str = "";
 /// Type for dense vector
 pub type DenseVector = Vec<VectorElementType>;
 
+/// Type for multi dense vector
+pub type MultiDenseVector = Vec<DenseVector>;
+
 impl<'a> VectorRef<'a> {
     // Cannot use `ToOwned` trait because of `Borrow` implementation for `Vector`
     pub fn to_owned(self) -> Vector {

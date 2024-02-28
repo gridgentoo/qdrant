@@ -216,6 +216,9 @@ impl Segment {
                         | VectorStorageEnum::DenseMemmap(_)
                         | VectorStorageEnum::DenseAppendableMemmap(_) => vec![1.0; dim].into(),
                         VectorStorageEnum::SparseSimple(_) => SparseVector::default().into(),
+                        VectorStorageEnum::MultiDenseSimple(_) => {
+                            unimplemented!("multidense vector")
+                        }
                     };
                     vector_storage.insert_vector(new_index, vector.to_vec_ref())?;
                     vector_storage.delete_vector(new_index)?;

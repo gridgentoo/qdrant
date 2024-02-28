@@ -9,7 +9,6 @@ use common::types::PointOffsetType;
 use log::debug;
 use parking_lot::RwLock;
 use rocksdb::DB;
-use serde::{Deserialize, Serialize};
 
 use super::chunked_vectors::ChunkedVectors;
 use super::vector_storage_base::VectorStorage;
@@ -21,6 +20,9 @@ use crate::data_types::named_vectors::CowVector;
 use crate::data_types::vectors::{DenseVector, VectorElementType, VectorRef};
 use crate::types::Distance;
 use crate::vector_storage::bitvec::bitvec_set_deleted;
+use crate::vector_storage::common::StoredRecord;
+
+type StoredDenseVector = StoredRecord<DenseVector>;
 
 /// In-memory vector storage with on-update persistence using `store`
 pub struct SimpleDenseVectorStorage {
@@ -28,17 +30,11 @@ pub struct SimpleDenseVectorStorage {
     distance: Distance,
     vectors: ChunkedVectors<VectorElementType>,
     db_wrapper: DatabaseColumnWrapper,
-    update_buffer: StoredRecord,
+    update_buffer: StoredDenseVector,
     /// BitVec for deleted flags. Grows dynamically upto last set flag.
     deleted: BitVec,
     /// Current number of deleted vectors.
     deleted_count: usize,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-struct StoredRecord {
-    pub deleted: bool,
-    pub vector: DenseVector,
 }
 
 pub fn open_simple_vector_storage(
@@ -56,7 +52,7 @@ pub fn open_simple_vector_storage(
     for (key, value) in db_wrapper.lock_db().iter()? {
         let point_id: PointOffsetType = bincode::deserialize(&key)
             .map_err(|_| OperationError::service_error("cannot deserialize point id from db"))?;
-        let stored_record: StoredRecord = bincode::deserialize(&value)
+        let stored_record: StoredDenseVector = bincode::deserialize(&value)
             .map_err(|_| OperationError::service_error("cannot deserialize record from db"))?;
 
         // Propagate deleted flag
@@ -103,7 +99,7 @@ impl SimpleDenseVectorStorage {
             if !was_deleted {
                 self.deleted_count += 1;
             } else {
-                self.deleted_count -= 1;
+                self.deleted_count = self.deleted_count.saturating_sub(1);
             }
         }
         was_deleted
