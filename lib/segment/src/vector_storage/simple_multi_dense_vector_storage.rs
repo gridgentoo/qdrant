@@ -106,13 +106,13 @@ impl SimpleMultiDenseVectorStorage {
         &mut self,
         key: PointOffsetType,
         deleted: bool,
-        vector: Option<&MultiDenseVector>,
+        vector: Option<MultiDenseVector>,
     ) -> OperationResult<()> {
         // Write vector state to buffer record
         let record = &mut self.update_buffer;
         record.deleted = deleted;
         if let Some(vector) = vector {
-            record.vector = vector.clone();
+            record.vector = vector;
         }
 
         // Store updated record
@@ -153,9 +153,9 @@ impl VectorStorage for SimpleMultiDenseVectorStorage {
     fn insert_vector(&mut self, key: PointOffsetType, vector: VectorRef) -> OperationResult<()> {
         let vector: &[DenseVector] = vector.try_into()?;
         let multi_vector = vector.to_vec();
-        self.vectors.insert(key as usize, vector.to_owned());
+        self.vectors.insert(key as usize, multi_vector.clone());
         self.set_deleted(key, false);
-        self.update_stored(key, false, Some(&multi_vector))?;
+        self.update_stored(key, false, Some(multi_vector))?;
         Ok(())
     }
 
@@ -176,7 +176,7 @@ impl VectorStorage for SimpleMultiDenseVectorStorage {
             self.vectors.push(other_multi_vector.clone());
             let new_id = self.vectors.len() as PointOffsetType - 1;
             self.set_deleted(new_id, other_deleted);
-            self.update_stored(new_id, other_deleted, Some(&other_multi_vector))?;
+            self.update_stored(new_id, other_deleted, Some(other_multi_vector))?;
         }
         let end_index = self.vectors.len() as PointOffsetType;
         Ok(start_index..end_index)
