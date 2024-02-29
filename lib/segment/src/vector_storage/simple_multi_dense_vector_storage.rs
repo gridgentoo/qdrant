@@ -22,13 +22,14 @@ type StoredMultiDenseVector = StoredRecord<MultiDenseVector>;
 pub struct SimpleMultiDenseVectorStorage {
     dim: usize,
     distance: Distance,
+    /// Keep vectors in memory
+    vectors: Vec<MultiDenseVector>,
     db_wrapper: DatabaseColumnWrapper,
     update_buffer: StoredMultiDenseVector,
     /// BitVec for deleted flags. Grows dynamically upto last set flag.
     deleted: BitVec,
     /// Current number of deleted vectors.
     deleted_count: usize,
-    total_vector_count: usize,
 }
 
 #[allow(unused)]
@@ -39,6 +40,7 @@ pub fn open_simple_multi_dense_vector_storage(
     distance: Distance,
     stopped: &AtomicBool,
 ) -> OperationResult<Arc<AtomicRefCell<VectorStorageEnum>>> {
+    let mut vectors = vec![];
     let (mut deleted, mut deleted_count) = (BitVec::new(), 0);
     let db_wrapper = DatabaseColumnWrapper::new(database, database_column_name);
 
@@ -56,7 +58,7 @@ pub fn open_simple_multi_dense_vector_storage(
             bitvec_set_deleted(&mut deleted, point_id, true);
             deleted_count += 1;
         }
-        total_vector_count = std::cmp::max(total_vector_count, point_id as usize + 1);
+        vectors.insert(point_id as usize, stored_record.vector);
 
         check_process_stopped(stopped)?;
     }
@@ -65,6 +67,7 @@ pub fn open_simple_multi_dense_vector_storage(
         VectorStorageEnum::MultiDenseSimple(SimpleMultiDenseVectorStorage {
             dim,
             distance,
+            vectors,
             db_wrapper,
             update_buffer: StoredMultiDenseVector {
                 deleted: false,
@@ -72,7 +75,6 @@ pub fn open_simple_multi_dense_vector_storage(
             },
             deleted,
             deleted_count,
-            total_vector_count,
         }),
     )))
 }
@@ -82,7 +84,7 @@ impl SimpleMultiDenseVectorStorage {
     #[inline]
     #[allow(unused)]
     fn set_deleted(&mut self, key: PointOffsetType, deleted: bool) -> bool {
-        if key as usize >= self.total_vector_count {
+        if key as usize >= self.vectors.len() {
             return false;
         }
         let was_deleted = bitvec_set_deleted(&mut self.deleted, key, deleted);
