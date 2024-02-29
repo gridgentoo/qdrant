@@ -1,19 +1,22 @@
+use std::ops::Range;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use atomic_refcell::AtomicRefCell;
-use bitvec::prelude::BitVec;
+use bitvec::prelude::{BitSlice, BitVec};
 use common::types::PointOffsetType;
 use parking_lot::RwLock;
 use rocksdb::DB;
 
 use crate::common::operation_error::{check_process_stopped, OperationError, OperationResult};
 use crate::common::rocksdb_wrapper::DatabaseColumnWrapper;
-use crate::data_types::vectors::MultiDenseVector;
+use crate::common::Flusher;
+use crate::data_types::named_vectors::CowVector;
+use crate::data_types::vectors::{MultiDenseVector, VectorRef};
 use crate::types::Distance;
 use crate::vector_storage::bitvec::bitvec_set_deleted;
 use crate::vector_storage::common::StoredRecord;
-use crate::vector_storage::VectorStorageEnum;
+use crate::vector_storage::{VectorStorage, VectorStorageEnum};
 
 type StoredMultiDenseVector = StoredRecord<MultiDenseVector>;
 
@@ -122,5 +125,82 @@ impl SimpleMultiDenseVectorStorage {
     }
 }
 
-// TODO integrate MultiDenseVector to Vectors enum to enable this implementation
-// impl VectorStorage for SimpleMultiDenseVectorStorage
+impl VectorStorage for SimpleMultiDenseVectorStorage {
+    fn vector_dim(&self) -> usize {
+        self.dim
+    }
+
+    fn distance(&self) -> Distance {
+        self.distance
+    }
+
+    fn is_on_disk(&self) -> bool {
+        false
+    }
+
+    fn total_vector_count(&self) -> usize {
+        self.vectors.len()
+    }
+
+    fn get_vector(&self, key: PointOffsetType) -> CowVector {
+        self.get_vector_opt(key).expect("Vector must exist")
+    }
+
+    fn insert_vector(&mut self, key: PointOffsetType, vector: VectorRef) -> OperationResult<()> {
+        let vector: &MultiDenseVector = vector.try_into()?;
+        self.vectors.insert(key as usize, vector.clone());
+        self.set_deleted(key, false);
+        self.update_stored(key, false, Some(vector))?;
+        Ok(())
+    }
+
+    fn update_from(
+        &mut self,
+        other: &VectorStorageEnum,
+        other_ids: &mut impl Iterator<Item = PointOffsetType>,
+        stopped: &AtomicBool,
+    ) -> OperationResult<Range<PointOffsetType>> {
+        let start_index = self.vectors.len() as PointOffsetType;
+        for point_id in other_ids {
+            check_process_stopped(stopped)?;
+            // Do not perform preprocessing - vectors should be already processed
+            let other_vector = other.get_vector(point_id);
+            let other_vector: &MultiDenseVector = other_vector.as_vec_ref().try_into()?;
+            let other_deleted = other.is_deleted_vector(point_id);
+            self.vectors.push(other_vector.clone());
+            let new_id = self.vectors.len() as PointOffsetType - 1;
+            self.set_deleted(new_id, other_deleted);
+            self.update_stored(new_id, other_deleted, Some(other_vector))?;
+        }
+        let end_index = self.vectors.len() as PointOffsetType;
+        Ok(start_index..end_index)
+    }
+
+    fn flusher(&self) -> Flusher {
+        self.db_wrapper.flusher()
+    }
+
+    fn files(&self) -> Vec<std::path::PathBuf> {
+        vec![]
+    }
+
+    fn delete_vector(&mut self, key: PointOffsetType) -> OperationResult<bool> {
+        let is_deleted = !self.set_deleted(key, true);
+        if is_deleted {
+            self.update_stored(key, true, None)?;
+        }
+        Ok(is_deleted)
+    }
+
+    fn is_deleted_vector(&self, key: PointOffsetType) -> bool {
+        self.deleted.get(key as usize).map(|b| *b).unwrap_or(false)
+    }
+
+    fn deleted_vector_count(&self) -> usize {
+        self.deleted_count
+    }
+
+    fn deleted_vector_bitslice(&self) -> &BitSlice {
+        self.deleted.as_bitslice()
+    }
+}
