@@ -12,7 +12,7 @@ use crate::common::operation_error::{check_process_stopped, OperationError, Oper
 use crate::common::rocksdb_wrapper::DatabaseColumnWrapper;
 use crate::common::Flusher;
 use crate::data_types::named_vectors::CowVector;
-use crate::data_types::vectors::{MultiDenseVector, VectorRef};
+use crate::data_types::vectors::{DenseVector, MultiDenseVector, VectorRef};
 use crate::types::Distance;
 use crate::vector_storage::bitvec::bitvec_set_deleted;
 use crate::vector_storage::common::StoredRecord;
@@ -143,14 +143,19 @@ impl VectorStorage for SimpleMultiDenseVectorStorage {
     }
 
     fn get_vector(&self, key: PointOffsetType) -> CowVector {
-        self.get_vector_opt(key).expect("Vector must exist")
+        self.vectors
+            .get(key as usize)
+            .expect("vector not found")
+            .as_slice()
+            .into()
     }
 
     fn insert_vector(&mut self, key: PointOffsetType, vector: VectorRef) -> OperationResult<()> {
-        let vector: &MultiDenseVector = vector.try_into()?;
-        self.vectors.insert(key as usize, vector.clone());
+        let vector: &[DenseVector] = vector.try_into()?;
+        let multi_vector = vector.to_vec();
+        self.vectors.insert(key as usize, vector.to_owned());
         self.set_deleted(key, false);
-        self.update_stored(key, false, Some(vector))?;
+        self.update_stored(key, false, Some(&multi_vector))?;
         Ok(())
     }
 
@@ -165,12 +170,13 @@ impl VectorStorage for SimpleMultiDenseVectorStorage {
             check_process_stopped(stopped)?;
             // Do not perform preprocessing - vectors should be already processed
             let other_vector = other.get_vector(point_id);
-            let other_vector: &MultiDenseVector = other_vector.as_vec_ref().try_into()?;
+            let other_vector: &[DenseVector] = other_vector.as_vec_ref().try_into()?;
+            let other_multi_vector = other_vector.to_vec();
             let other_deleted = other.is_deleted_vector(point_id);
-            self.vectors.push(other_vector.clone());
+            self.vectors.push(other_multi_vector.clone());
             let new_id = self.vectors.len() as PointOffsetType - 1;
             self.set_deleted(new_id, other_deleted);
-            self.update_stored(new_id, other_deleted, Some(other_vector))?;
+            self.update_stored(new_id, other_deleted, Some(&other_multi_vector))?;
         }
         let end_index = self.vectors.len() as PointOffsetType;
         Ok(start_index..end_index)
