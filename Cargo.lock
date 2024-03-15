@@ -5206,6 +5206,7 @@ dependencies = [
  "anyhow",
  "api",
  "async-recursion",
+ "async-trait",
  "atomicwrites",
  "cancel",
  "chrono",
